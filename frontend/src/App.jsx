@@ -1,33 +1,40 @@
-import { TonConnectButton, useTonAddress } from "@tonconnect/ui-react";
+import { useState } from "react";
+import { useTonConnectUI } from "@tonconnect/ui-react";
 
 function App() {
-  const address = useTonAddress();
+  const [level, setLevel] = useState(1);
+  const [tonConnectUI] = useTonConnectUI();
+
+  const nextLevel = async () => {
+    try {
+      // 💸 1. Відправка TON
+      await tonConnectUI.sendTransaction({
+        validUntil: Math.floor(Date.now() / 1000) + 60,
+        messages: [
+          {
+            address: "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c", // ⚠️ замінимо потім
+            amount: "10000000" // 0.01 TON
+          }
+        ]
+      });
+
+      // ⬆ 2. Переходимо на наступний рівень
+      setLevel(prev => prev + 1);
+
+    } catch (e) {
+      console.log("❌ Transaction cancelled");
+    }
+  };
 
   return (
-    <div style={{
-      minHeight: "100vh",
-      background: "#0a0f1c",
-      color: "white",
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: "20px"
-    }}>
-      <h1 style={{ fontSize: "32px" }}>
-        🚀 Triangle TON
-      </h1>
+    <div style={{ padding: "20px" }}>
+      <h1>Triangle TON</h1>
 
-      <TonConnectButton />
+      <p>Площадка: {level}</p>
 
-      {address && (
-        <div style={{ textAlign: "center" }}>
-          <p>Wallet connected:</p>
-          <p style={{ fontSize: "12px", opacity: 0.6 }}>
-            {address}
-          </p>
-        </div>
-      )}
+      <button onClick={nextLevel}>
+        Перейти на наступну площадку
+      </button>
     </div>
   );
 }
