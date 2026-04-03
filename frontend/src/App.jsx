@@ -1,42 +1,50 @@
-import { useState } from "react";
-import { useTonConnectUI } from "@tonconnect/ui-react";
+import { TonConnectButton, useTonConnectUI } from '@tonconnect/ui-react'
 
 function App() {
-  const [level, setLevel] = useState(1);
-  const [tonConnectUI] = useTonConnectUI();
+  const [tonConnectUI] = useTonConnectUI()
 
-  const nextLevel = async () => {
+  const handlePay = async () => {
+    const transaction = {
+      validUntil: Math.floor(Date.now() / 1000) + 60,
+      messages: [
+        {
+          address: "UQAIIOBPuw8SvrV2KvrQkszeVVwZgRCkxQs4xxzXEedY-O3O",
+          amount: "1500000000" // 1.5 TON
+        }
+      ]
+    }
+
     try {
-      // 💸 1. Відправка TON
-      await tonConnectUI.sendTransaction({
-        validUntil: Math.floor(Date.now() / 1000) + 60,
-        messages: [
-          {
-            address: "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c", // ⚠️ замінимо потім
-            amount: "10000000" // 0.01 TON
-          }
-        ]
-      });
+      await tonConnectUI.sendTransaction(transaction)
 
-      // ⬆ 2. Переходимо на наступний рівень
-      setLevel(prev => prev + 1);
+      // 👉 ПІСЛЯ ОПЛАТИ ВИКЛИКАЄМО BACKEND
+      await fetch("http://localhost:3000/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          userId: "user_" + Date.now()
+        })
+      })
+
+      alert("Успішно оплачено і зареєстровано 🚀")
 
     } catch (e) {
-      console.log("❌ Transaction cancelled");
+      console.log(e)
+      alert("Помилка оплати")
     }
-  };
+  }
 
   return (
-    <div style={{ padding: "20px" }}>
-      <h1>Triangle TON</h1>
+    <div>
+      <TonConnectButton />
 
-      <p>Площадка: {level}</p>
-
-      <button onClick={nextLevel}>
-        Перейти на наступну площадку
+      <button onClick={handlePay}>
+        Увійти за 1.5 TON
       </button>
     </div>
-  );
+  )
 }
 
-export default App;
+export default App
