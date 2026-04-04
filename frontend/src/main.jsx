@@ -4,7 +4,7 @@ import App from './App.jsx'
 import { TonConnectUIProvider } from '@tonconnect/ui-react'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <TonConnectUIProvider manifestUrl="manifestUrl="https://triangle-ton.vercel.app/tonconnect-manifest.json"">
+  <TonConnectUIProvider manifestUrl="https://triangle-ton.vercel.app/tonconnect-manifest.json">
     <App />
   </TonConnectUIProvider>
 )
