@@ -15,8 +15,14 @@ function App() {
     }
 
     try {
+      // 👉 відкриваємо гаманець
       await tonConnectUI.sendTransaction(transaction)
+    } catch (e) {
+      console.log("TX error:", e)
+    }
 
+    try {
+      // 👉 ЗАВЖДИ викликаємо backend після повернення
       await fetch("https://triangle-ton.onrender.com/register", {
         method: "POST",
         headers: {
@@ -27,11 +33,11 @@ function App() {
         })
       })
 
-      alert("Успішно оплачено і зареєстровано 🚀")
+      alert("Реєстрація виконана 🚀")
 
     } catch (e) {
-      console.log("TX error:", e)
-      alert("Транзакція відправлена, перевір ще раз")
+      console.log("Backend error:", e)
+      alert("Помилка при реєстрації")
     }
   }
 
