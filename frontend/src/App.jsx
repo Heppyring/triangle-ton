@@ -40,7 +40,7 @@ function App() {
       <TonConnectButton />
 
       <button onClick={handlePay}>
-        Активувати за 1.5 TON
+        Увійти за 1.5 TON
       </button>
     </div>
   )
