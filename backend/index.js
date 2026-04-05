@@ -8,6 +8,7 @@ app.use(cors());
 app.use(express.json());
 
 let slots = [];
+let users = {}; // 🔥 зберігаємо рефералів
 
 // 🔥 ПЛОЩАДКИ
 const LEVELS = [
@@ -32,7 +33,39 @@ function createSlot(userId, platform = 0) {
   };
 }
 
-// 🔍 знайти першого з вільним місцем
+// 🔍 BFS всередині структури реферала
+function getNextParentInTree(referrerId, platform) {
+  const queue = [];
+
+  const rootSlots = slots.filter(s => s.userId.startsWith(referrerId));
+  queue.push(...rootSlots);
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+
+    if (
+      current.platform === platform &&
+      (!current.left || !current.right) &&
+      !current.closed
+    ) {
+      return current;
+    }
+
+    if (current.left) {
+      const leftNode = slots.find(s => s.id === current.left);
+      if (leftNode) queue.push(leftNode);
+    }
+
+    if (current.right) {
+      const rightNode = slots.find(s => s.id === current.right);
+      if (rightNode) queue.push(rightNode);
+    }
+  }
+
+  return null;
+}
+
+// 🔍 fallback (як було)
 function getNextParent(platform) {
   return slots.find(s =>
     s.platform === platform &&
@@ -80,15 +113,28 @@ function checkClose(slot) {
 
     slot.earnings += reward;
 
-    // 🔁 реінвест в ту ж площадку
+    // 🔁 реінвест (з тим самим рефералом)
+    const userBase = slot.userId.split("_")[0];
+    const ref = users[userBase]?.referrerId || null;
+
     const reinvestSlot = createSlot(slot.userId, slot.platform);
-    placeSlot(reinvestSlot);
+    placeSlot(reinvestSlot, ref);
   }
 }
 
 // ➕ вставка в дерево
-function placeSlot(slot) {
-  const parent = getNextParent(slot.platform);
+function placeSlot(slot, referrerId = null) {
+  let parent = null;
+
+  // 🔥 якщо є реферал → шукаємо в його структурі
+  if (referrerId && users[referrerId]) {
+    parent = getNextParentInTree(referrerId, slot.platform);
+  }
+
+  // fallback якщо нема
+  if (!parent) {
+    parent = getNextParent(slot.platform);
+  }
 
   if (!parent) {
     slots.push(slot);
@@ -122,21 +168,27 @@ function placeSlot(slot) {
 app.post('/register', (req, res) => {
   try {
     const userId = req.body?.userId;
+    const referrerId = req.body?.referrerId || null;
 
     if (!userId) {
       return res.status(400).json({ error: "userId required" });
     }
 
+    // 🔥 зберігаємо реферала
+    users[userId] = {
+      referrerId
+    };
+
     const slot1 = createSlot(userId + "_1", 0);
     const slot2 = createSlot(userId + "_2", 0);
     const slot3 = createSlot(userId + "_3", 0);
 
-    placeSlot(slot1);
-    placeSlot(slot2);
-    placeSlot(slot3);
+    placeSlot(slot1, referrerId);
+    placeSlot(slot2, referrerId);
+    placeSlot(slot3, referrerId);
 
     res.json({
-      message: "User entered with 3 slots (1.5 TON)",
+      message: "User entered with referral system",
       slots: [slot1, slot2, slot3]
     });
 
