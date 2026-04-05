@@ -8,7 +8,7 @@ app.use(cors());
 app.use(express.json());
 
 let slots = [];
-let users = {}; // 🔥 зберігаємо рефералів
+let users = {}; // userId -> { referrerId }
 
 // 🔥 ПЛОЩАДКИ
 const LEVELS = [
@@ -18,6 +18,11 @@ const LEVELS = [
   { levels: 2, total: 6,  lastLevel: 4,  price: 206.1 },
   { levels: 5, total: 62, lastLevel: 32, price: 432.6 }
 ];
+
+// 🔺 helper — отримати базовий userId (без _1 _2 _3)
+function getBaseUserId(userId) {
+  return userId.split('_').slice(0, 2).join('_');
+}
 
 // 🔺 створення місця
 function createSlot(userId, platform = 0) {
@@ -33,11 +38,12 @@ function createSlot(userId, platform = 0) {
   };
 }
 
-// 🔍 BFS всередині структури реферала
+// 🔍 BFS ВСЕРЕДИНІ СТРУКТУРИ РЕФЕРАЛА
 function getNextParentInTree(referrerId, platform) {
   const queue = [];
 
-  const rootSlots = slots.filter(s => s.userId.startsWith(referrerId));
+  const rootSlots = slots.filter(s => getBaseUserId(s.userId) === referrerId);
+
   queue.push(...rootSlots);
 
   while (queue.length > 0) {
@@ -65,7 +71,7 @@ function getNextParentInTree(referrerId, platform) {
   return null;
 }
 
-// 🔍 fallback (як було)
+// 🔍 fallback
 function getNextParent(platform) {
   return slots.find(s =>
     s.platform === platform &&
@@ -96,7 +102,7 @@ function countChildren(id) {
   return count;
 }
 
-// 💰 закриття площадки + реінвест
+// 💰 закриття
 function checkClose(slot) {
   const config = LEVELS[slot.platform];
   if (!config) return;
@@ -108,30 +114,30 @@ function checkClose(slot) {
 
     const reward = config.lastLevel * config.price;
 
-    console.log("🎉 CLOSED:", slot.userId, "| platform", slot.platform);
+    console.log("🎉 CLOSED:", slot.userId);
     console.log("💰 EARNED:", reward, "TON");
 
     slot.earnings += reward;
 
-    // 🔁 реінвест (з тим самим рефералом)
-    const userBase = slot.userId.split("_")[0];
-    const ref = users[userBase]?.referrerId || null;
+    // 🔁 реінвест
+    const baseUser = getBaseUserId(slot.userId);
+    const ref = users[baseUser]?.referrerId || null;
 
     const reinvestSlot = createSlot(slot.userId, slot.platform);
     placeSlot(reinvestSlot, ref);
   }
 }
 
-// ➕ вставка в дерево
+// ➕ вставка
 function placeSlot(slot, referrerId = null) {
   let parent = null;
 
-  // 🔥 якщо є реферал → шукаємо в його структурі
+  // 🔥 пробуємо вставити в структуру реферала
   if (referrerId && users[referrerId]) {
     parent = getNextParentInTree(referrerId, slot.platform);
   }
 
-  // fallback якщо нема
+  // fallback
   if (!parent) {
     parent = getNextParent(slot.platform);
   }
@@ -142,7 +148,7 @@ function placeSlot(slot, referrerId = null) {
     return;
   }
 
-  console.log("💸 Payment →", parent.userId, "| platform", slot.platform);
+  console.log("💸 Payment →", parent.userId);
 
   if (!parent.left) {
     parent.left = slot.id;
@@ -153,14 +159,13 @@ function placeSlot(slot, referrerId = null) {
   slot.parentId = parent.id;
   slots.push(slot);
 
-  // перевірка вверх
   let current = parent;
 
   while (current) {
     checkClose(current);
-
-    if (!current.parentId) break;
-    current = slots.find(s => s.id === current.parentId);
+    current = current.parentId
+      ? slots.find(s => s.id === current.parentId)
+      : null;
   }
 }
 
@@ -174,21 +179,18 @@ app.post('/register', (req, res) => {
       return res.status(400).json({ error: "userId required" });
     }
 
-    // 🔥 зберігаємо реферала
-    users[userId] = {
-      referrerId
-    };
+    users[userId] = { referrerId };
 
-    const slot1 = createSlot(userId + "_1", 0);
-    const slot2 = createSlot(userId + "_2", 0);
-    const slot3 = createSlot(userId + "_3", 0);
+    const slot1 = createSlot(userId + "_1");
+    const slot2 = createSlot(userId + "_2");
+    const slot3 = createSlot(userId + "_3");
 
     placeSlot(slot1, referrerId);
     placeSlot(slot2, referrerId);
     placeSlot(slot3, referrerId);
 
     res.json({
-      message: "User entered with referral system",
+      message: "User registered",
       slots: [slot1, slot2, slot3]
     });
 
@@ -198,7 +200,7 @@ app.post('/register', (req, res) => {
   }
 });
 
-// 📊 всі слоти
+// 📊
 app.get('/slots', (req, res) => {
   res.json(slots);
 });
