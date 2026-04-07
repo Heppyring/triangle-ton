@@ -1,270 +1,152 @@
 const express = require('express');
 const cors = require('cors');
+const { v4: uuidv4 } = require('uuid');
 const { createClient } = require('@supabase/supabase-js');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
 
 const app = express();
-
 app.use(cors());
 app.use(express.json());
 
-// 🔑 SUPABASE
+// 🔐 ENV
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
 );
 
-// 🔥 ПЛОЩАДКИ (ВСІ)
-const LEVELS = [
-  { levels: 5, total: 62, lastLevel: 32, price: 0.5 },
-  { levels: 4, total: 30, lastLevel: 16, price: 6.4 },
-  { levels: 3, total: 14, lastLevel: 8,  price: 50 },
-  { levels: 2, total: 6,  lastLevel: 4,  price: 206.1 },
-  { levels: 5, total: 62, lastLevel: 32, price: 432.6 }
-];
+const JWT_SECRET = "super_secret_key"; // 🔥 потім змінимо
 
-// 🔹 helper
-function getBaseUserId(userId) {
-  return userId.split('_').slice(0, 2).join('_');
+// ==========================
+// 🔺 HELPERS
+// ==========================
+
+function generateToken(user) {
+  return jwt.sign(
+    { id: user.id },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  );
 }
 
-// 🔹 створення слота
-function createSlot(userId, platform = 0) {
-  return {
-    user_id: userId,
-    platform,
-    parent_id: null,
-    left_id: null,
-    right_id: null,
-    closed: false,
-    earnings: 0
-  };
-}
-
-// 🔍 отримати користувача
-async function getUser(userId) {
+async function getUserByEmail(email) {
   const { data } = await supabase
     .from('users')
     .select('*')
-    .eq('id', userId)
-    .maybeSingle();
+    .eq('email', email)
+    .single();
 
   return data;
 }
 
-// 🔍 BFS в структурі реферала
-async function getNextParentInTree(referrerId, platform) {
-  const { data: allSlots } = await supabase
-    .from('slots')
-    .select('*');
+// ==========================
+// 🚀 REGISTER (EMAIL)
+// ==========================
 
-  const queue = allSlots.filter(s =>
-    getBaseUserId(s.user_id) === referrerId
-  );
+app.post('/auth/register', async (req, res) => {
+  try {
+    const { email, password, referrer_id } = req.body;
 
-  while (queue.length > 0) {
-    const current = queue.shift();
-
-    if (
-      current.platform === platform &&
-      (!current.left_id || !current.right_id) &&
-      !current.closed
-    ) {
-      return current;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'email & password required' });
     }
 
-    if (current.left_id) {
-      const left = allSlots.find(s => s.id === current.left_id);
-      if (left) queue.push(left);
+    const existing = await getUserByEmail(email);
+    if (existing) {
+      return res.status(400).json({ error: 'User already exists' });
     }
 
-    if (current.right_id) {
-      const right = allSlots.find(s => s.id === current.right_id);
-      if (right) queue.push(right);
-    }
-  }
+    const hash = await bcrypt.hash(password, 10);
 
-  return null;
-}
+    const userId = "user_" + Date.now();
 
-// 🔍 fallback (глобальна черга)
-async function getNextParent(platform) {
-  const { data } = await supabase
-    .from('slots')
-    .select('*')
-    .eq('platform', platform)
-    .eq('closed', false);
-
-  return data.find(s => !s.left_id || !s.right_id) || null;
-}
-
-// 📊 підрахунок дітей
-async function countChildren(id) {
-  const { data: allSlots } = await supabase
-    .from('slots')
-    .select('*');
-
-  let count = 0;
-
-  function dfs(nodeId) {
-    const node = allSlots.find(s => s.id === nodeId);
-    if (!node) return;
-
-    if (node.left_id) {
-      count++;
-      dfs(node.left_id);
-    }
-    if (node.right_id) {
-      count++;
-      dfs(node.right_id);
-    }
-  }
-
-  dfs(id);
-  return count;
-}
-
-// 💰 закриття + реінвест + перехід вверх
-async function checkClose(slot) {
-  const config = LEVELS[slot.platform];
-  if (!config) return;
-
-  const total = await countChildren(slot.id);
-
-  if (total >= config.total - 1 && !slot.closed) {
-    const reward = config.lastLevel * config.price;
-
-    console.log("🎉 CLOSED:", slot.user_id, "| platform:", slot.platform);
-    console.log("💰 EARNED:", reward);
-
-    await supabase
-      .from('slots')
-      .update({
-        closed: true,
-        earnings: slot.earnings + reward
-      })
-      .eq('id', slot.id);
-
-    const baseUser = getBaseUserId(slot.user_id);
-    const user = await getUser(baseUser);
-    const ref = user?.referrer_id || null;
-
-    // 🔁 РЕІНВЕСТ В ТУ Ж ПЛОЩАДКУ
-    const reinvest = createSlot(slot.user_id, slot.platform);
-    await placeSlot(reinvest, ref);
-
-    // 🔝 ПЕРЕХІД НА ВИЩУ ПЛОЩАДКУ
-    if (slot.platform + 1 < LEVELS.length) {
-      const upgrade = createSlot(slot.user_id, slot.platform + 1);
-      await placeSlot(upgrade, ref);
-    }
-  }
-}
-
-// ➕ вставка
-async function placeSlot(slot, referrerId = null) {
-  let parent = null;
-
-  if (referrerId) {
-    parent = await getNextParentInTree(referrerId, slot.platform);
-  }
-
-  if (!parent) {
-    parent = await getNextParent(slot.platform);
-  }
-
-  const { data: inserted } = await supabase
-    .from('slots')
-    .insert([slot])
-    .select();
-
-  const newSlot = inserted[0];
-
-  if (!parent) {
-    console.log("👑 FIRST SLOT:", slot.user_id);
-    return newSlot;
-  }
-
-  console.log("💸 Payment →", parent.user_id);
-
-  // оновлюємо parent
-  if (!parent.left_id) {
-    await supabase
-      .from('slots')
-      .update({ left_id: newSlot.id })
-      .eq('id', parent.id);
-  } else {
-    await supabase
-      .from('slots')
-      .update({ right_id: newSlot.id })
-      .eq('id', parent.id);
-  }
-
-  // записуємо parent_id
-  await supabase
-    .from('slots')
-    .update({ parent_id: parent.id })
-    .eq('id', newSlot.id);
-
-  // перевірка вверх
-  let current = parent;
-
-  while (current) {
-    await checkClose(current);
-
-    if (!current.parent_id) break;
-
-    const { data } = await supabase
-      .from('slots')
-      .select('*')
-      .eq('id', current.parent_id)
+    const { data, error } = await supabase
+      .from('users')
+      .insert([{
+        id: userId,
+        email,
+        password: hash,
+        referrer_id
+      }])
+      .select()
       .single();
 
-    current = data;
-  }
+    if (error) throw error;
 
-  return newSlot;
-}
+    const token = generateToken(data);
 
-// 🚀 РЕЄСТРАЦІЯ
-app.post('/register', async (req, res) => {
-  try {
-    const userId = req.body?.userId;
-    const referrerId = req.body?.referrerId || null;
-
-    if (!userId) {
-      return res.status(400).json({ error: "userId required" });
-    }
-
-    // 🔥 створюємо юзера
-    await supabase.from('users').insert([
-      {
-        id: userId,
-        referrer_id: referrerId
-      }
-    ]);
-
-    // 🔥 3 місця
-    const s1 = await placeSlot(createSlot(userId + "_1", 0), referrerId);
-    const s2 = await placeSlot(createSlot(userId + "_2", 0), referrerId);
-    const s3 = await placeSlot(createSlot(userId + "_3", 0), referrerId);
-
-    res.json({
-      message: "User registered",
-      slots: [s1, s2, s3]
-    });
+    res.json({ user: data, token });
 
   } catch (err) {
-    console.log("REGISTER ERROR:", err);
-    res.status(500).json({ error: "server error" });
+    console.log(err);
+    res.status(500).json({ error: 'register error' });
   }
 });
 
-// 📊 всі слоти
-app.get('/slots', async (req, res) => {
-  const { data } = await supabase.from('slots').select('*');
-  res.json(data);
+// ==========================
+// 🔑 LOGIN
+// ==========================
+
+app.post('/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    const user = await getUserByEmail(email);
+
+    if (!user) {
+      return res.status(400).json({ error: 'User not found' });
+    }
+
+    const valid = await bcrypt.compare(password, user.password);
+
+    if (!valid) {
+      return res.status(400).json({ error: 'Wrong password' });
+    }
+
+    const token = generateToken(user);
+
+    res.json({ user, token });
+
+  } catch (err) {
+    res.status(500).json({ error: 'login error' });
+  }
+});
+
+// ==========================
+// 👤 GET ME
+// ==========================
+
+app.get('/auth/me', async (req, res) => {
+  try {
+    const auth = req.headers.authorization;
+
+    if (!auth) return res.status(401).json({ error: 'No token' });
+
+    const token = auth.split(' ')[1];
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+
+    const { data } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', decoded.id)
+      .single();
+
+    res.json(data);
+
+  } catch (err) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+});
+
+// ==========================
+// 🧪 TEST
+// ==========================
+
+app.get('/', (req, res) => {
+  res.send("API WORKING");
 });
 
 app.listen(3000, () => {
-  console.log("🚀 Server running on port 3000");
+  console.log("🚀 Server running");
 });
