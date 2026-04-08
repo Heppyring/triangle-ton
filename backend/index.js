@@ -17,138 +17,295 @@ const supabase = createClient(
 const JWT_SECRET = process.env.JWT_SECRET || "super_secret_key";
 
 // ==========================
+// 🔥 FRACTALS (НАЗВИ)
+// ==========================
+const FRACTALS = [
+  { id: 0, name: "Fractal D1", total: 62, reward: 32 * 0.5 },
+  { id: 1, name: "Fractal D2", total: 30, reward: 16 * 6.4 },
+  { id: 2, name: "Fractal D3", total: 14, reward: 8 * 50 },
+  { id: 3, name: "Fractal D4", total: 6, reward: 4 * 206.1 },
+  { id: 4, name: "Fractal DX", total: 62, reward: 32 * 432.6 }
+];
+
+// ==========================
 // HELPERS
 // ==========================
 
 function generateToken(user) {
-  return jwt.sign(
-    { id: user.id },
-    JWT_SECRET,
-    { expiresIn: '7d' }
-  );
+  return jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '7d' });
 }
 
 async function getUserByEmail(email) {
-  const { data, error } = await supabase
+  const { data } = await supabase
     .from('users')
     .select('*')
     .eq('email', email)
     .maybeSingle();
 
-  if (error) {
-    console.log("GET USER ERROR:", error);
-    return null;
-  }
-
   return data;
 }
 
 // ==========================
-// REGISTER
+// 🔺 SLOT HELPERS
 // ==========================
 
-app.post('/auth/register', async (req, res) => {
-  try {
-    const { email, password, referrer_id } = req.body;
+// BFS в структурі реферала
+async function getNextParentInTree(referrerId, platform) {
+  const { data: allSlots } = await supabase
+    .from('slots')
+    .select('*')
+    .ilike('user_id', `${referrerId}%`);
 
-    if (!email || !password) {
-      return res.status(400).json({ error: 'email & password required' });
+  if (!allSlots || allSlots.length === 0) return null;
+
+  const queue = [...allSlots.filter(s => !s.parent_id)];
+
+  while (queue.length) {
+    const current = queue.shift();
+
+    if (
+      current.platform === platform &&
+      (!current.left_id || !current.right_id) &&
+      !current.closed
+    ) {
+      return current;
     }
 
-    const existing = await getUserByEmail(email);
-    if (existing) {
-      return res.status(400).json({ error: 'User already exists' });
+    const left = allSlots.find(s => s.id === current.left_id);
+    const right = allSlots.find(s => s.id === current.right_id);
+
+    if (left) queue.push(left);
+    if (right) queue.push(right);
+  }
+
+  return null;
+}
+
+// fallback (глобал)
+async function getNextParent(platform) {
+  const { data } = await supabase
+    .from('slots')
+    .select('*')
+    .eq('platform', platform)
+    .eq('closed', false);
+
+  return data.find(s => !s.left_id || !s.right_id) || null;
+}
+
+// рахуємо дітей
+async function countChildren(slotId) {
+  const { data } = await supabase.from('slots').select('*');
+
+  let count = 0;
+
+  function dfs(id) {
+    const node = data.find(s => s.id === id);
+    if (!node) return;
+
+    if (node.left_id) {
+      count++;
+      dfs(node.left_id);
     }
+    if (node.right_id) {
+      count++;
+      dfs(node.right_id);
+    }
+  }
 
-    const hash = await bcrypt.hash(password, 10);
+  dfs(slotId);
+  return count;
+}
 
-    const userId = "user_" + Date.now();
+// ==========================
+// 💰 CHECK CLOSE + REINVEST
+// ==========================
 
-    const { data, error } = await supabase
-      .from('users')
-      .insert([{
-        id: userId,
-        email,
-        password: hash,
-        referrer_id: referrer_id || null
-      }])
+async function checkClose(slot) {
+  const config = FRACTALS[slot.platform];
+  if (!config || slot.closed) return;
+
+  const total = await countChildren(slot.id);
+
+  if (total >= config.total - 1) {
+    console.log("🎉 CLOSED:", slot.user_id);
+
+    // закриваємо
+    await supabase
+      .from('slots')
+      .update({
+        closed: true,
+        earnings: slot.earnings + config.reward
+      })
+      .eq('id', slot.id);
+
+    // 🔁 РЕІНВЕСТ
+    const newSlot = {
+      user_id: slot.user_id,
+      platform: slot.platform,
+      parent_id: null,
+      left_id: null,
+      right_id: null,
+      closed: false,
+      earnings: 0
+    };
+
+    await placeSlot(newSlot, slot.user_id.split('_').slice(0, 2).join('_'));
+  }
+}
+
+// ==========================
+// ➕ PLACE SLOT
+// ==========================
+
+async function placeSlot(slot, referrerId = null) {
+  let parent = null;
+
+  // тільки в свою структуру
+  if (referrerId) {
+    parent = await getNextParentInTree(referrerId, slot.platform);
+  }
+
+  // fallback
+  if (!parent) {
+    parent = await getNextParent(slot.platform);
+  }
+
+  // якщо взагалі нема
+  if (!parent) {
+    const { data } = await supabase
+      .from('slots')
+      .insert([slot])
       .select()
       .single();
 
-    if (error) {
-      console.log(error);
-      return res.status(500).json({ error: 'DB error' });
+    console.log("👑 FIRST SLOT:", slot.user_id);
+    return data;
+  }
+
+  console.log("💸 Payment →", parent.user_id);
+
+  const field = !parent.left_id ? 'left_id' : 'right_id';
+
+  await supabase
+    .from('slots')
+    .update({ [field]: slot.id })
+    .eq('id', parent.id);
+
+  slot.parent_id = parent.id;
+
+  const { data: newSlot } = await supabase
+    .from('slots')
+    .insert([slot])
+    .select()
+    .single();
+
+  // перевірка вверх
+  let current = parent;
+
+  while (current) {
+    await checkClose(current);
+
+    if (!current.parent_id) break;
+
+    const { data } = await supabase
+      .from('slots')
+      .select('*')
+      .eq('id', current.parent_id)
+      .single();
+
+    current = data;
+  }
+
+  return newSlot;
+}
+
+// ==========================
+// 🚀 REGISTER (створює ТРІАДУ)
+// ==========================
+
+app.post('/register', async (req, res) => {
+  try {
+    const { userId, referrerId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: "userId required" });
     }
 
-    const token = generateToken(data);
+    const slots = [];
 
-    res.json({ user: data, token });
+    for (let i = 1; i <= 3; i++) {
+      const slot = {
+        user_id: `${userId}_${i}`,
+        platform: 0,
+        parent_id: null,
+        left_id: null,
+        right_id: null,
+        closed: false,
+        earnings: 0
+      };
+
+      const created = await placeSlot(slot, referrerId);
+      slots.push(created);
+    }
+
+    res.json({ message: "Triad created", slots });
 
   } catch (err) {
-    console.log("REGISTER ERROR:", err);
+    console.log(err);
     res.status(500).json({ error: 'register error' });
   }
 });
 
 // ==========================
-// LOGIN
+// 📊 GET SLOTS
 // ==========================
 
-app.post('/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
+app.get('/slots', async (req, res) => {
+  const { data } = await supabase.from('slots').select('*');
 
-    const user = await getUserByEmail(email);
-
-    if (!user) {
-      return res.status(400).json({ error: 'User not found' });
-    }
-
-    const valid = await bcrypt.compare(password, user.password);
-
-    if (!valid) {
-      return res.status(400).json({ error: 'Wrong password' });
-    }
-
-    const token = generateToken(user);
-
-    res.json({ user, token });
-
-  } catch (err) {
-    console.log("LOGIN ERROR:", err);
-    res.status(500).json({ error: 'login error' });
-  }
+  res.json(
+    data.map(s => ({
+      ...s,
+      fractal: FRACTALS[s.platform].name
+    }))
+  );
 });
 
 // ==========================
-// GET ME
+// AUTH
 // ==========================
 
-app.get('/auth/me', async (req, res) => {
-  try {
-    const auth = req.headers.authorization;
+app.post('/auth/register', async (req, res) => {
+  const { email, password, referrer_id } = req.body;
 
-    if (!auth) return res.status(401).json({ error: 'No token' });
+  const hash = await bcrypt.hash(password, 10);
 
-    const token = auth.split(' ')[1];
+  const { data } = await supabase
+    .from('users')
+    .insert([{
+      id: "user_" + Date.now(),
+      email,
+      password: hash,
+      referrer_id
+    }])
+    .select()
+    .single();
 
-    const decoded = jwt.verify(token, JWT_SECRET);
+  res.json({ user: data, token: generateToken(data) });
+});
 
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', decoded.id)
-      .single();
+app.post('/auth/login', async (req, res) => {
+  const { email, password } = req.body;
 
-    if (error) {
-      return res.status(500).json({ error: 'DB error' });
-    }
+  const user = await getUserByEmail(email);
 
-    res.json(data);
+  if (!user) return res.status(400).json({ error: 'not found' });
 
-  } catch (err) {
-    res.status(401).json({ error: 'Invalid token' });
-  }
+  const valid = await bcrypt.compare(password, user.password);
+
+  if (!valid) return res.status(400).json({ error: 'wrong pass' });
+
+  res.json({ user, token: generateToken(user) });
 });
 
 // ==========================
@@ -156,11 +313,11 @@ app.get('/auth/me', async (req, res) => {
 // ==========================
 
 app.get('/', (req, res) => {
-  res.send("API WORKING");
+  res.send("API WORKING 🚀");
 });
 
 // ==========================
-// PORT (ВАЖЛИВО ДЛЯ RENDER)
+// PORT
 // ==========================
 
 const PORT = process.env.PORT || 3000;
