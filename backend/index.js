@@ -17,7 +17,7 @@ const supabase = createClient(
 const JWT_SECRET = process.env.JWT_SECRET || "super_secret_key";
 
 // ==========================
-// 🔥 FRACTALS (НАЗВИ)
+// 🔥 FRACTALS
 // ==========================
 const FRACTALS = [
   { id: 0, name: "Fractal D1", total: 62, reward: 32 * 0.5 },
@@ -46,33 +46,41 @@ async function getUserByEmail(email) {
 }
 
 // ==========================
-// 🔺 SLOT HELPERS
+// 🔺 ПРАВИЛЬНИЙ ПЕРЕЛИВ
 // ==========================
 
-// BFS в структурі реферала
 async function getNextParentInTree(referrerId, platform) {
   const { data: allSlots } = await supabase
     .from('slots')
     .select('*')
-    .ilike('user_id', `${referrerId}%`);
+    .eq('platform', platform)
+    .eq('closed', false);
 
   if (!allSlots || allSlots.length === 0) return null;
 
-  const queue = [...allSlots.filter(s => !s.parent_id)];
+  // тільки команда
+  const teamSlots = allSlots.filter(s =>
+    s.user_id.startsWith(referrerId)
+  );
+
+  if (teamSlots.length === 0) return null;
+
+  // корінь
+  const root = teamSlots.find(s => !s.parent_id);
+
+  if (!root) return null;
+
+  const queue = [root];
 
   while (queue.length) {
     const current = queue.shift();
 
-    if (
-      current.platform === platform &&
-      (!current.left_id || !current.right_id) &&
-      !current.closed
-    ) {
+    if (!current.left_id || !current.right_id) {
       return current;
     }
 
-    const left = allSlots.find(s => s.id === current.left_id);
-    const right = allSlots.find(s => s.id === current.right_id);
+    const left = teamSlots.find(s => s.id === current.left_id);
+    const right = teamSlots.find(s => s.id === current.right_id);
 
     if (left) queue.push(left);
     if (right) queue.push(right);
@@ -81,18 +89,10 @@ async function getNextParentInTree(referrerId, platform) {
   return null;
 }
 
-// fallback (глобал)
-async function getNextParent(platform) {
-  const { data } = await supabase
-    .from('slots')
-    .select('*')
-    .eq('platform', platform)
-    .eq('closed', false);
+// ==========================
+// 👶 COUNT CHILDREN
+// ==========================
 
-  return data.find(s => !s.left_id || !s.right_id) || null;
-}
-
-// рахуємо дітей
 async function countChildren(slotId) {
   const { data } = await supabase.from('slots').select('*');
 
@@ -117,7 +117,7 @@ async function countChildren(slotId) {
 }
 
 // ==========================
-// 💰 CHECK CLOSE + REINVEST
+// 💰 CLOSE + REINVEST
 // ==========================
 
 async function checkClose(slot) {
@@ -129,7 +129,6 @@ async function checkClose(slot) {
   if (total >= config.total - 1) {
     console.log("🎉 CLOSED:", slot.user_id);
 
-    // закриваємо
     await supabase
       .from('slots')
       .update({
@@ -138,7 +137,7 @@ async function checkClose(slot) {
       })
       .eq('id', slot.id);
 
-    // 🔁 РЕІНВЕСТ
+    // 🔁 реінвест
     const newSlot = {
       user_id: slot.user_id,
       platform: slot.platform,
@@ -149,7 +148,9 @@ async function checkClose(slot) {
       earnings: 0
     };
 
-    await placeSlot(newSlot, slot.user_id.split('_').slice(0, 2).join('_'));
+    const baseUser = slot.user_id.split('_').slice(0, 2).join('_');
+
+    await placeSlot(newSlot, baseUser);
   }
 }
 
@@ -160,26 +161,14 @@ async function checkClose(slot) {
 async function placeSlot(slot, referrerId = null) {
   let parent = null;
 
-  // тільки в свою структуру
   if (referrerId) {
     parent = await getNextParentInTree(referrerId, slot.platform);
   }
 
-  // fallback
+  // ❗ якщо нема місця → не вставляємо
   if (!parent) {
-    parent = await getNextParent(slot.platform);
-  }
-
-  // якщо взагалі нема
-  if (!parent) {
-    const { data } = await supabase
-      .from('slots')
-      .insert([slot])
-      .select()
-      .single();
-
-    console.log("👑 FIRST SLOT:", slot.user_id);
-    return data;
+    console.log("❌ Немає місця в структурі:", referrerId);
+    return null;
   }
 
   console.log("💸 Payment →", parent.user_id);
@@ -220,7 +209,7 @@ async function placeSlot(slot, referrerId = null) {
 }
 
 // ==========================
-// 🚀 REGISTER (створює ТРІАДУ)
+// 🚀 REGISTER (ТРІАДА)
 // ==========================
 
 app.post('/register', async (req, res) => {
@@ -245,7 +234,8 @@ app.post('/register', async (req, res) => {
       };
 
       const created = await placeSlot(slot, referrerId);
-      slots.push(created);
+
+      if (created) slots.push(created);
     }
 
     res.json({ message: "Triad created", slots });
@@ -257,7 +247,7 @@ app.post('/register', async (req, res) => {
 });
 
 // ==========================
-// 📊 GET SLOTS
+// 📊 SLOTS
 // ==========================
 
 app.get('/slots', async (req, res) => {
