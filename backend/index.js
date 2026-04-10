@@ -20,11 +20,11 @@ const JWT_SECRET = process.env.JWT_SECRET || "super_secret_key";
 // 🔥 FRACTALS
 // ==========================
 const FRACTALS = [
-  { id: 0, name: "Fractal D1", total: 62, reward: 32 * 0.5 },
-  { id: 1, name: "Fractal D2", total: 30, reward: 16 * 6.4 },
-  { id: 2, name: "Fractal D3", total: 14, reward: 8 * 50 },
-  { id: 3, name: "Fractal D4", total: 6, reward: 4 * 206.1 },
-  { id: 4, name: "Fractal DX", total: 62, reward: 32 * 432.6 }
+  { id: 0, name: "Fractal D1", total: 62, reward: 16 },
+  { id: 1, name: "Fractal D2", total: 30, reward: 102.4 },
+  { id: 2, name: "Fractal D3", total: 14, reward: 400 },
+  { id: 3, name: "Fractal D4", total: 6, reward: 824.4 },
+  { id: 4, name: "Fractal DX", total: 62, reward: 13843.2 }
 ];
 
 // ==========================
@@ -46,7 +46,7 @@ async function getUserByEmail(email) {
 }
 
 // ==========================
-// 🔺 BFS (ПРАВИЛЬНИЙ)
+// 🔺 BFS (РЕАЛЬНА СТРУКТУРА)
 // ==========================
 
 async function getNextParentInTree(referrerId, platform) {
@@ -58,13 +58,11 @@ async function getNextParentInTree(referrerId, platform) {
 
   if (!allSlots || allSlots.length === 0) return null;
 
-  const teamSlots = allSlots.filter(s =>
-    s.user_id.startsWith(referrerId)
+  // 🔥 знаходимо ROOT по першому слоту користувача
+  const root = allSlots.find(
+    s => s.user_id === `${referrerId}_1`
   );
 
-  if (teamSlots.length === 0) return null;
-
-  const root = teamSlots.find(s => !s.parent_id);
   if (!root) return null;
 
   const queue = [root];
@@ -72,12 +70,14 @@ async function getNextParentInTree(referrerId, platform) {
   while (queue.length) {
     const current = queue.shift();
 
+    // ✅ є місце → беремо
     if (!current.left_id || !current.right_id) {
       return current;
     }
 
-    const left = teamSlots.find(s => s.id === current.left_id);
-    const right = teamSlots.find(s => s.id === current.right_id);
+    // 👉 рух по дереву
+    const left = allSlots.find(s => s.id === current.left_id);
+    const right = allSlots.find(s => s.id === current.right_id);
 
     if (left) queue.push(left);
     if (right) queue.push(right);
@@ -148,6 +148,9 @@ async function checkClose(slot) {
       })
       .eq('id', slot.id);
 
+    // 🔁 реінвест
+    const baseUser = slot.user_id.split('_').slice(0, 2).join('_');
+
     const newSlot = {
       user_id: slot.user_id,
       platform: slot.platform,
@@ -157,8 +160,6 @@ async function checkClose(slot) {
       closed: false,
       earnings: 0
     };
-
-    const baseUser = slot.user_id.split('_').slice(0, 2).join('_');
 
     await placeSlot(newSlot, baseUser);
   }
@@ -171,17 +172,17 @@ async function checkClose(slot) {
 async function placeSlot(slot, referrerId = null) {
   let parent = null;
 
-  // 1️⃣ своя команда
+  // 👉 1. своя структура
   if (referrerId) {
     parent = await getNextParentInTree(referrerId, slot.platform);
   }
 
-  // 2️⃣ fallback (важливо)
+  // 👉 2. fallback
   if (!parent) {
     parent = await getNextParent(slot.platform);
   }
 
-  // 3️⃣ якщо взагалі пусто → root
+  // 👉 3. якщо пусто
   if (!parent) {
     const { data } = await supabase
       .from('slots')
@@ -210,7 +211,7 @@ async function placeSlot(slot, referrerId = null) {
     .select()
     .single();
 
-  // перевірка вверх
+  // 🔁 перевірка вверх
   let current = parent;
 
   while (current) {
@@ -256,7 +257,6 @@ app.post('/register', async (req, res) => {
       };
 
       const created = await placeSlot(slot, referrerId);
-
       if (created) slots.push(created);
     }
 
