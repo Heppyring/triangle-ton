@@ -46,7 +46,7 @@ async function getUserByEmail(email) {
 }
 
 // ==========================
-// 🔺 ПРАВИЛЬНИЙ ПЕРЕЛИВ
+// 🔺 BFS (ПРАВИЛЬНИЙ)
 // ==========================
 
 async function getNextParentInTree(referrerId, platform) {
@@ -58,16 +58,13 @@ async function getNextParentInTree(referrerId, platform) {
 
   if (!allSlots || allSlots.length === 0) return null;
 
-  // тільки команда
   const teamSlots = allSlots.filter(s =>
     s.user_id.startsWith(referrerId)
   );
 
   if (teamSlots.length === 0) return null;
 
-  // корінь
   const root = teamSlots.find(s => !s.parent_id);
-
   if (!root) return null;
 
   const queue = [root];
@@ -87,6 +84,20 @@ async function getNextParentInTree(referrerId, platform) {
   }
 
   return null;
+}
+
+// ==========================
+// 🌍 GLOBAL FALLBACK
+// ==========================
+
+async function getNextParent(platform) {
+  const { data } = await supabase
+    .from('slots')
+    .select('*')
+    .eq('platform', platform)
+    .eq('closed', false);
+
+  return data.find(s => !s.left_id || !s.right_id) || null;
 }
 
 // ==========================
@@ -137,7 +148,6 @@ async function checkClose(slot) {
       })
       .eq('id', slot.id);
 
-    // 🔁 реінвест
     const newSlot = {
       user_id: slot.user_id,
       platform: slot.platform,
@@ -161,14 +171,26 @@ async function checkClose(slot) {
 async function placeSlot(slot, referrerId = null) {
   let parent = null;
 
+  // 1️⃣ своя команда
   if (referrerId) {
     parent = await getNextParentInTree(referrerId, slot.platform);
   }
 
-  // ❗ якщо нема місця → не вставляємо
+  // 2️⃣ fallback (важливо)
   if (!parent) {
-    console.log("❌ Немає місця в структурі:", referrerId);
-    return null;
+    parent = await getNextParent(slot.platform);
+  }
+
+  // 3️⃣ якщо взагалі пусто → root
+  if (!parent) {
+    const { data } = await supabase
+      .from('slots')
+      .insert([slot])
+      .select()
+      .single();
+
+    console.log("👑 FIRST SLOT:", slot.user_id);
+    return data;
   }
 
   console.log("💸 Payment →", parent.user_id);
