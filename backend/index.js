@@ -1,3 +1,5 @@
+TRUNCATE TABLE slots;
+
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
@@ -46,7 +48,7 @@ async function getUserByEmail(email) {
 }
 
 // ==========================
-// 🔺 BFS (ПРАВИЛЬНИЙ)
+// 🔺 BFS (ФІНАЛЬНИЙ — ТРІАДА)
 // ==========================
 
 async function getNextParentInTree(referrerId, platform) {
@@ -64,10 +66,12 @@ async function getNextParentInTree(referrerId, platform) {
 
   if (teamSlots.length === 0) return null;
 
-  const root = teamSlots.find(s => !s.parent_id);
-  if (!root) return null;
+  // 🔥 ВСІ КОРЕНІ (тріада)
+  const roots = teamSlots.filter(s => !s.parent_id);
 
-  const queue = [root];
+  if (roots.length === 0) return null;
+
+  const queue = [...roots];
 
   while (queue.length) {
     const current = queue.shift();
@@ -101,7 +105,7 @@ async function getNextParent(platform) {
 }
 
 // ==========================
-// 👶 COUNT CHILDREN
+// 👶 COUNT CHILDREN (ВСІ)
 // ==========================
 
 async function countChildren(slotId) {
@@ -148,6 +152,7 @@ async function checkClose(slot) {
       })
       .eq('id', slot.id);
 
+    // 🔁 реінвест
     const newSlot = {
       user_id: slot.user_id,
       platform: slot.platform,
@@ -165,13 +170,13 @@ async function checkClose(slot) {
 }
 
 // ==========================
-// ➕ PLACE SLOT (FIXED)
+// ➕ PLACE SLOT (ФІНАЛ)
 // ==========================
 
 async function placeSlot(slot, referrerId = null) {
   let parent = null;
 
-  // 1️⃣ шукаємо в своїй структурі
+  // 1️⃣ своя структура
   if (referrerId) {
     parent = await getNextParentInTree(referrerId, slot.platform);
   }
@@ -181,7 +186,7 @@ async function placeSlot(slot, referrerId = null) {
     parent = await getNextParent(slot.platform);
   }
 
-  // 3️⃣ якщо перший юзер
+  // 3️⃣ якщо перший слот
   if (!parent) {
     const { data } = await supabase
       .from('slots')
@@ -193,7 +198,7 @@ async function placeSlot(slot, referrerId = null) {
     return data;
   }
 
-  // ✅ СПОЧАТКУ створюємо слот
+  // ✅ створюємо слот
   const { data: newSlot } = await supabase
     .from('slots')
     .insert([slot])
@@ -202,7 +207,7 @@ async function placeSlot(slot, referrerId = null) {
 
   console.log("💸 Payment →", parent.user_id);
 
-  // ✅ ПОТІМ оновлюємо parent
+  // ✅ ставимо в дерево
   const field = !parent.left_id ? 'left_id' : 'right_id';
 
   await supabase
@@ -210,7 +215,7 @@ async function placeSlot(slot, referrerId = null) {
     .update({ [field]: newSlot.id })
     .eq('id', parent.id);
 
-  // ✅ оновлюємо parent_id у дитини
+  // ✅ прив’язуємо parent
   await supabase
     .from('slots')
     .update({ parent_id: parent.id })
