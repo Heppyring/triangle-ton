@@ -17,7 +17,7 @@ const supabase = createClient(
 const JWT_SECRET = process.env.JWT_SECRET || "super_secret_key";
 
 // ==========================
-// 🔥 FRACTALS
+// 🔥 FRACTALS (УСІ)
 // ==========================
 const FRACTALS = [
   { id: 0, name: "Fractal D1", total: 62, reward: 32 * 0.5 },
@@ -46,7 +46,7 @@ async function getUserByEmail(email) {
 }
 
 // ==========================
-// 🔺 BFS (ФІНАЛЬНИЙ — ТРІАДА)
+// 🔺 BFS КОМАНДА
 // ==========================
 
 async function getNextParentInTree(referrerId, platform) {
@@ -56,7 +56,7 @@ async function getNextParentInTree(referrerId, platform) {
     .eq('platform', platform)
     .eq('closed', false);
 
-  if (!allSlots || allSlots.length === 0) return null;
+  if (!allSlots) return null;
 
   const teamSlots = allSlots.filter(s =>
     s.user_id.startsWith(referrerId)
@@ -64,11 +64,7 @@ async function getNextParentInTree(referrerId, platform) {
 
   if (teamSlots.length === 0) return null;
 
-  // 🔥 ВСІ КОРЕНІ (тріада)
   const roots = teamSlots.filter(s => !s.parent_id);
-
-  if (roots.length === 0) return null;
-
   const queue = [...roots];
 
   while (queue.length) {
@@ -89,21 +85,40 @@ async function getNextParentInTree(referrerId, platform) {
 }
 
 // ==========================
-// 🌍 GLOBAL FALLBACK
+// 🌍 ГЛОБАЛЬНИЙ BFS
 // ==========================
 
 async function getNextParent(platform) {
-  const { data } = await supabase
+  const { data: allSlots } = await supabase
     .from('slots')
     .select('*')
     .eq('platform', platform)
     .eq('closed', false);
 
-  return data.find(s => !s.left_id || !s.right_id) || null;
+  if (!allSlots || allSlots.length === 0) return null;
+
+  const roots = allSlots.filter(s => !s.parent_id);
+  const queue = [...roots];
+
+  while (queue.length) {
+    const current = queue.shift();
+
+    if (!current.left_id || !current.right_id) {
+      return current;
+    }
+
+    const left = allSlots.find(s => s.id === current.left_id);
+    const right = allSlots.find(s => s.id === current.right_id);
+
+    if (left) queue.push(left);
+    if (right) queue.push(right);
+  }
+
+  return null;
 }
 
 // ==========================
-// 👶 COUNT CHILDREN (ВСІ)
+// 👶 COUNT CHILDREN
 // ==========================
 
 async function countChildren(slotId) {
@@ -150,7 +165,7 @@ async function checkClose(slot) {
       })
       .eq('id', slot.id);
 
-    // 🔁 реінвест
+    // 🔁 РЕІНВЕСТ
     const newSlot = {
       user_id: slot.user_id,
       platform: slot.platform,
@@ -168,23 +183,23 @@ async function checkClose(slot) {
 }
 
 // ==========================
-// ➕ PLACE SLOT (ФІНАЛ)
+// ➕ PLACE SLOT
 // ==========================
 
 async function placeSlot(slot, referrerId = null) {
   let parent = null;
 
-  // 1️⃣ своя структура
+  // 1️⃣ команда
   if (referrerId) {
     parent = await getNextParentInTree(referrerId, slot.platform);
   }
 
-  // 2️⃣ fallback
+  // 2️⃣ глобально
   if (!parent) {
     parent = await getNextParent(slot.platform);
   }
 
-  // 3️⃣ якщо перший слот
+  // 3️⃣ перший слот
   if (!parent) {
     const { data } = await supabase
       .from('slots')
@@ -205,7 +220,7 @@ async function placeSlot(slot, referrerId = null) {
 
   console.log("💸 Payment →", parent.user_id);
 
-  // ✅ ставимо в дерево
+  // ✅ вставляємо в дерево
   const field = !parent.left_id ? 'left_id' : 'right_id';
 
   await supabase
@@ -213,7 +228,7 @@ async function placeSlot(slot, referrerId = null) {
     .update({ [field]: newSlot.id })
     .eq('id', parent.id);
 
-  // ✅ прив’язуємо parent
+  // ✅ parent_id
   await supabase
     .from('slots')
     .update({ parent_id: parent.id })
@@ -240,7 +255,7 @@ async function placeSlot(slot, referrerId = null) {
 }
 
 // ==========================
-// 🚀 REGISTER (ТРІАДА)
+// 🚀 REGISTER
 // ==========================
 
 app.post('/register', async (req, res) => {
