@@ -40,21 +40,42 @@ function generateToken(user) {
 }
 
 async function getUserByEmail(email) {
-  const { data } = await supabase
-    .from('users')
-    .select('*')
-    .eq('email', email)
-    .maybeSingle();
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .maybeSingle();
 
-  return data;
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error("getUserByEmail error:", err.message);
+    return null;
+  }
 }
 
 // ==========================
-// 🔺 TRIAD (через SQL RPC)
+// 🧪 TEST (ДУЖЕ ВАЖЛИВО)
+// ==========================
+
+app.post('/api/test', (req, res) => {
+  console.log("🔥 TEST BODY:", req.body);
+
+  res.json({
+    ok: true,
+    body: req.body
+  });
+});
+
+// ==========================
+// 🔺 TRIAD (через RPC)
 // ==========================
 
 app.post('/api/register-triad', async (req, res) => {
   try {
+    console.log("📥 INCOMING:", req.body);
+
     const { userId, platformId = 0 } = req.body;
 
     if (!userId) {
@@ -64,15 +85,24 @@ app.post('/api/register-triad', async (req, res) => {
     const slots = [];
 
     for (let i = 1; i <= 3; i++) {
+      const slotId = `${userId}_${i}`;
+
+      console.log("➡️ Creating slot:", slotId);
+
       const { data, error } = await supabase.rpc('join_fractal', {
-        p_user_id: `${userId}_${i}`,
+        p_user_id: slotId,
         p_platform: platformId
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error("❌ RPC ERROR:", error.message);
+        throw error;
+      }
 
       slots.push(data);
     }
+
+    console.log("✅ TRIAD CREATED");
 
     res.json({
       message: "Triad created",
@@ -80,7 +110,7 @@ app.post('/api/register-triad', async (req, res) => {
     });
 
   } catch (err) {
-    console.error("TRIAD ERROR:", err.message);
+    console.error("🔥 TRIAD ERROR:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -103,6 +133,7 @@ app.get('/slots', async (req, res) => {
     );
 
   } catch (err) {
+    console.error("GET SLOTS ERROR:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -114,6 +145,10 @@ app.get('/slots', async (req, res) => {
 app.post('/auth/register', async (req, res) => {
   try {
     const { email, password, referrer_id } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: "email & password required" });
+    }
 
     const hash = await bcrypt.hash(password, 10);
 
@@ -133,6 +168,7 @@ app.post('/auth/register', async (req, res) => {
     res.json({ user: data, token: generateToken(data) });
 
   } catch (err) {
+    console.error("REGISTER ERROR:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -156,12 +192,13 @@ app.post('/auth/login', async (req, res) => {
     res.json({ user, token: generateToken(user) });
 
   } catch (err) {
+    console.error("LOGIN ERROR:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ==========================
-// TEST
+// ROOT
 // ==========================
 
 app.get('/', (req, res) => {
