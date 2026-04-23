@@ -61,7 +61,7 @@ app.post('/api/register-triad', async (req, res) => {
       return res.status(400).json({ error: "userId required" });
     }
 
-    // ✅ ЗАХИСТ ВІД ДУБЛІКАТІВ
+    // ✅ Захист від дублікатів
     const { data: existing } = await supabase
       .from('slots')
       .select('id')
@@ -80,6 +80,11 @@ app.post('/api/register-triad', async (req, res) => {
       });
 
       if (error) throw error;
+
+      // 🔥 ВОТ ГОЛОВНЕ (виплати + реінвест)
+      await supabase.rpc('check_and_close', {
+        p_slot_id: data.id
+      });
 
       slots.push(data);
     }
