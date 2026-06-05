@@ -3,8 +3,10 @@ const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const { randomUUID } = require('crypto');
 
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 
@@ -32,11 +34,15 @@ const FRACTALS = [
 ];
 
 // ==========================
-// 🛠 HELPERS
+// HELPERS
 // ==========================
 
 function generateToken(user) {
-  return jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign(
+    { id: user.id },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  );
 }
 
 async function getUserByEmail(email) {
@@ -55,33 +61,42 @@ async function getUserByEmail(email) {
 
 app.post('/api/register-triad', async (req, res) => {
   try {
+
     const { userId, platformId = 0 } = req.body;
 
     if (!userId) {
-      return res.status(400).json({ error: "userId required" });
+      return res.status(400).json({
+        error: "userId required"
+      });
     }
 
-    // ✅ Захист від дублікатів
+    // захист від дублювання
+
     const { data: existing } = await supabase
       .from('slots')
       .select('id')
       .like('user_id', `${userId}_%`);
 
-    if (existing && existing.length > 0) {
-      return res.status(400).json({ error: "Triad already exists" });
+    if (existing?.length > 0) {
+      return res.status(400).json({
+        error: "Triad already exists"
+      });
     }
 
     const slots = [];
 
     for (let i = 1; i <= 3; i++) {
-      const { data, error } = await supabase.rpc('join_fractal', {
-        p_user_id: `${userId}_${i}`,
-        p_platform: platformId
-      });
+
+      const { data, error } =
+        await supabase.rpc('join_fractal', {
+          p_user_id: `${userId}_${i}`,
+          p_platform: platformId
+        });
 
       if (error) throw error;
 
-      // 🔥 ВОТ ГОЛОВНЕ (виплати + реінвест)
+      // перевірка закриття
+
       await supabase.rpc('check_and_close', {
         p_slot_id: data.id
       });
@@ -95,8 +110,15 @@ app.post('/api/register-triad', async (req, res) => {
     });
 
   } catch (err) {
-    console.error("TRIAD ERROR:", err.message);
-    res.status(500).json({ error: err.message });
+
+    console.error(
+      "TRIAD ERROR:",
+      err.message
+    );
+
+    res.status(500).json({
+      error: err.message
+    });
   }
 });
 
@@ -105,74 +127,192 @@ app.post('/api/register-triad', async (req, res) => {
 // ==========================
 
 app.get('/slots', async (req, res) => {
+
   try {
-    const { data, error } = await supabase.from('slots').select('*');
+
+    const { data, error } =
+      await supabase
+        .from('slots')
+        .select('*')
+        .order(
+          'created_at',
+          { ascending: true }
+        );
 
     if (error) throw error;
 
     res.json(
-      data.map(s => ({
-        ...s,
-        fractal: FRACTALS[s.platform]?.name || "Unknown"
+
+      data.map(slot => ({
+
+        ...slot,
+
+        fractal:
+          FRACTALS[slot.platform]?.name
+          || "Unknown"
+
       }))
     );
 
   } catch (err) {
-    res.status(500).json({ error: err.message });
+
+    res.status(500).json({
+      error: err.message
+    });
+
   }
+
 });
 
 // ==========================
-// 🔐 AUTH
+// 🔐 REGISTER
 // ==========================
 
 app.post('/auth/register', async (req, res) => {
+
   try {
-    const { email, password, referrer_id } = req.body;
 
-    const hash = await bcrypt.hash(password, 10);
+    const {
+      email,
+      password,
+      referrer_id
+    } = req.body;
 
-    const { data, error } = await supabase
+    if (!email || !password) {
+
+      return res.status(400).json({
+        error:
+        "email and password required"
+      });
+
+    }
+
+    const existing =
+      await getUserByEmail(email);
+
+    if (existing) {
+
+      return res.status(400).json({
+        error: "User already exists"
+      });
+
+    }
+
+    const hash =
+      await bcrypt.hash(
+        password,
+        10
+      );
+
+    const { data, error } =
+      await supabase
       .from('users')
       .insert([{
-        id: "user_" + Date.now(),
+
+        id: randomUUID(),
+
         email,
+
         password: hash,
+
         referrer_id
+
       }])
       .select()
       .single();
 
     if (error) throw error;
 
-    res.json({ user: data, token: generateToken(data) });
+    res.json({
+
+      user: data,
+
+      token:
+      generateToken(data)
+
+    });
 
   } catch (err) {
-    res.status(500).json({ error: err.message });
+
+    res.status(500).json({
+
+      error: err.message
+
+    });
+
   }
+
 });
 
-app.post('/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
+// ==========================
+// 🔐 LOGIN
+// ==========================
 
-    const user = await getUserByEmail(email);
+app.post('/auth/login', async (req, res) => {
+
+  try {
+
+    const {
+      email,
+      password
+    } = req.body;
+
+    if (!email || !password) {
+
+      return res.status(400).json({
+        error:
+        "email and password required"
+      });
+
+    }
+
+    const user =
+      await getUserByEmail(email);
 
     if (!user) {
-      return res.status(400).json({ error: 'not found' });
+
+      return res.status(400).json({
+        error:
+        "User not found"
+      });
+
     }
 
-    const valid = await bcrypt.compare(password, user.password);
+    const valid =
+      await bcrypt.compare(
+        password,
+        user.password
+      );
 
     if (!valid) {
-      return res.status(400).json({ error: 'wrong pass' });
+
+      return res.status(400).json({
+        error:
+        "Wrong password"
+      });
+
     }
 
-    res.json({ user, token: generateToken(user) });
+    res.json({
+
+      user,
+
+      token:
+      generateToken(user)
+
+    });
 
   } catch (err) {
-    res.status(500).json({ error: err.message });
+
+    res.status(500).json({
+
+      error:
+      err.message
+
+    });
+
   }
+
 });
 
 // ==========================
@@ -180,15 +320,25 @@ app.post('/auth/login', async (req, res) => {
 // ==========================
 
 app.get('/', (req, res) => {
-  res.send("API WORKING 🚀");
+
+  res.send(
+    "API WORKING 🚀"
+  );
+
 });
 
 // ==========================
 // PORT
 // ==========================
 
-const PORT = process.env.PORT || 3000;
+const PORT =
+process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log("🚀 Server running on port", PORT);
+
+  console.log(
+    "🚀 Server running on port",
+    PORT
+  );
+
 });
